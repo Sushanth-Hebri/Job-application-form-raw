@@ -3,85 +3,144 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Web Compass</title>
+  <title>Web Compass with Firebase & Voice</title>
   <style>
-    body {
-      font-family: sans-serif;
-      text-align: center;
-      margin-top: 50px;
-    }
-    #compass-container {
-      width: 300px;
-      height: 300px;
-      margin: 0 auto;
-      position: relative;
-    }
-    #compass {
-      width: 100%;
-      height: 100%;
-      transition: transform 0.3s ease-in-out;
-    }
-    #heading {
-      font-size: 24px;
-      margin-top: 20px;
-    }
-    button {
-      margin-top: 30px;
-      padding: 10px 20px;
-      font-size: 16px;
-    }
+    body { font-family: sans-serif; text-align: center; margin: 30px; }
+    #compass { transform: rotate(0deg); width: 200px; height: 200px; transition: transform 0.5s ease-in-out; }
+    input, button, label { margin: 10px; display: block; width: 80%; margin-left: auto; margin-right: auto; }
+    #toggleBackground { margin-top: 20px; }
   </style>
 </head>
 <body>
-  <h1>Web Compass</h1>
-  <div id="compass-container">
-    <svg id="compass" viewBox="0 0 100 100">
-      <circle cx="50" cy="50" r="48" stroke="black" stroke-width="2" fill="#f2f2f2"/>
-      <line x1="50" y1="2" x2="50" y2="50" stroke="red" stroke-width="4" />
-      <text x="50" y="15" text-anchor="middle" font-size="10" fill="black">N</text>
-      <text x="50" y="95" text-anchor="middle" font-size="10" fill="black">S</text>
-      <text x="5" y="55" text-anchor="middle" font-size="10" fill="black">W</text>
-      <text x="95" y="55" text-anchor="middle" font-size="10" fill="black">E</text>
-    </svg>
-  </div>
-  <div id="heading">Heading: --°</div>
-  <button onclick="initCompass()">Enable Compass</button>
+  <h1>Smart Compass</h1>
+  <img id="compass" src="https://upload.wikimedia.org/wikipedia/commons/6/6b/Compass_rose_pale.svg" alt="Compass">
+  <p>Heading: <span id="heading">0</span>°</p>
+
+  <input type="text" id="userId" placeholder="Enter your user ID (e.g., user1)" />
+  <input type="text" id="listenURL" placeholder="Enter Listening URL" />
+  <input type="text" id="commandURL" placeholder="Enter Command URL" />
+  <input type="text" id="sendToAppURL" placeholder="Enter Send-to-App URL" />
+  
+  <label>
+    <input type="checkbox" id="toggleBackground">
+    Enable run in background
+  </label>
+
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
   <script>
-    let compass = document.getElementById("compass");
-    let headingText = document.getElementById("heading");
+  const firebaseConfig = {
+  apiKey: "AIzaSyCPRBX23loTMM8zRtUI4_TiCZ6yhVTvkgc",
+  authDomain: "realtime-group-discussion.firebaseapp.com",
+  databaseURL: "https://realtime-group-discussion-default-rtdb.firebaseio.com",
+  projectId: "realtime-group-discussion",
+  storageBucket: "realtime-group-discussion.appspot.com",
+  messagingSenderId: "297395929587",
+  appId: "1:297395929587:web:21beac58c3a94e46505286"
+};
 
-    function initCompass() {
-      if (
-        typeof DeviceOrientationEvent !== "undefined" &&
-        typeof DeviceOrientationEvent.requestPermission === "function"
-      ) {
-        // iOS requires permission
-        DeviceOrientationEvent.requestPermission()
-          .then((response) => {
-            if (response === "granted") {
-              window.addEventListener("deviceorientationabsolute", handleOrientation, true);
-              window.addEventListener("deviceorientation", handleOrientation, true);
-            } else {
-              alert("Permission denied");
-            }
-          })
-          .catch(console.error);
-      } else {
-        // Android or others
-        window.addEventListener("deviceorientationabsolute", handleOrientation, true);
-        window.addEventListener("deviceorientation", handleOrientation, true);
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let currentHeading = 0;
+    let backgroundEnabled = false;
+    let spoken = false;
+
+    // Device Orientation for compass
+    window.addEventListener("deviceorientationabsolute", updateCompass, true);
+    window.addEventListener("deviceorientation", updateCompass, true);
+
+    function updateCompass(event) {
+      const alpha = event.alpha;
+      if (alpha !== null) {
+        currentHeading = Math.round(alpha);
+        document.getElementById("heading").textContent = currentHeading;
+        document.getElementById("compass").style.transform = `rotate(${-currentHeading}deg)`;
       }
     }
 
-    function handleOrientation(event) {
-      let alpha = event.alpha;
-      if (typeof alpha === "number") {
-        let rotation = 360 - alpha;
-        compass.style.transform = `rotate(${rotation}deg)`;
-        headingText.textContent = `Heading: ${Math.round(alpha)}°`;
-      }
+    // Firebase Direction Logic
+    setInterval(() => {
+      const userId = document.getElementById("userId").value.trim();
+      if (!userId) return;
+
+      db.ref(userId + "/request_direction").get().then(snapshot => {
+        const requested = snapshot.val();
+        if (requested === true) {
+          if (userId === "user1") {
+            db.ref(userId + "/direction").set(currentHeading);
+          } else {
+            db.ref(userId + "/direction").set(currentHeading);
+            db.ref(userId + "/request_direction").set(false);
+          }
+        }
+      });
+    }, 1000);
+
+    // Text-to-Speech
+    function speak(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      speechSynthesis.speak(utterance);
     }
+
+    // Listen for messages from sendToAppURL
+    setInterval(() => {
+      if (!backgroundEnabled) return;
+      const url = document.getElementById("sendToAppURL").value.trim();
+      if (url) {
+        fetch(url).then(res => res.text()).then(text => {
+          if (text && !spoken) {
+            spoken = true;
+            speak(text);
+            setTimeout(() => spoken = false, 5000);
+          }
+        }).catch(() => {});
+      }
+    }, 5000);
+
+    // Wake-word detection and command
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+
+      recognition.onresult = function(event) {
+        const transcript = event.results[event.results.length - 1][0].transcript.toLowerCase();
+        if (transcript.includes("friday")) {
+          speak("Yes, I'm listening");
+          listenForCommand();
+        }
+      };
+
+      recognition.start();
+
+      function listenForCommand() {
+        const commandRecognition = new SpeechRecognition();
+        commandRecognition.onresult = function(event) {
+          const command = event.results[0][0].transcript;
+          const commandUrl = document.getElementById("commandURL").value.trim();
+          if (commandUrl) {
+            fetch(commandUrl, {
+              method: "POST",
+              headers: { "Content-Type": "text/plain" },
+              body: command
+            });
+            speak("Command sent: " + command);
+          }
+        };
+        commandRecognition.start();
+      }
+    } else {
+      alert("Speech Recognition not supported on this browser.");
+    }
+
+    // Toggle background mode
+    document.getElementById("toggleBackground").addEventListener("change", function() {
+      backgroundEnabled = this.checked;
+    });
+
   </script>
 </body>
 </html>
